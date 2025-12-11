@@ -1,0 +1,36 @@
+# Configuration YAML pour Music Server
+
+# Structure des dossiers
+paths:
+  music: "./music"
+  downloads: "./downloads"
+  database: "./database"
+
+# Format audio
+audio:
+  format: "flac"
+  quality: "best"
+  bitrate: null  # null pour utiliser la qualité source
+
+# Structure Plex
+plex:
+  enabled: true
+  structure: "Artist/Album (Year)/Track - Title.flac"
+  include_year: true
+  clean_filenames: true
+
+# Sources de téléchargement
+sources:
+  youtube:
+    enabled: true
+    extractor: "yt-dlp"
+  youtube_music:
+    enabled: true
+    extractor: "yt-dlp"
+
+# Métadonnées
+metadata:
+  extract_cover: true
+  cover_filename: "cover.jpg"
+  normalize_tags: true
+

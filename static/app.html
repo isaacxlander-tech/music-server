@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Server - Application</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="app-page">
+    <header class="app-header">
+        <h1>🎵 Music Server</h1>
+        <div class="header-actions">
+            <span id="username-display"></span>
+            <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <!-- Search Section -->
+        <section class="card">
+            <h2>🔍 Chercher une musique ou un album</h2>
+            
+            <!-- Toggle Mode -->
+            <div class="search-mode-toggle">
+                <button id="url-mode-btn" class="mode-btn active" data-mode="url">
+                    🔗 Par URL
+                </button>
+                <button id="search-mode-btn" class="mode-btn" data-mode="search">
+                    🔍 Par recherche
+                </button>
+            </div>
+            
+            <!-- URL Mode Form -->
+            <form id="url-search-form" class="search-form active">
+                <div class="form-group">
+                    <label for="url-input">URL YouTube ou YouTube Music</label>
+                    <div class="input-with-button">
+                        <input type="url" id="url-input" name="url" required 
+                               placeholder="https://music.youtube.com/playlist?list=...">
+                        <button type="submit" class="btn btn-primary" id="url-search-btn">
+                            <span class="btn-text">🔍 Chercher</span>
+                            <span class="btn-loader" style="display: none;">⏳ Recherche...</span>
+                        </button>
+                    </div>
+                    <small class="form-hint">Collez l'URL d'une musique, d'un album ou d'une playlist</small>
+                </div>
+            </form>
+            
+            <!-- Text Search Mode Form -->
+            <form id="text-search-form" class="search-form" style="display: none;">
+                <div class="form-group">
+                    <label for="text-search-input">Rechercher par nom d'artiste, titre ou album</label>
+                    <div class="input-with-button">
+                        <input type="text" id="text-search-input" name="query" required 
+                               placeholder="Ex: jul">
+                        <button type="submit" class="btn btn-primary" id="text-search-btn">
+                            <span class="btn-text">🔍 Rechercher</span>
+                            <span class="btn-loader" style="display: none;">⏳ Recherche...</span>
+                        </button>
+                    </div>
+                    <small class="form-hint">Tapez le nom d'un artiste, d'une chanson ou d'un album</small>
+                </div>
+                
+                <!-- Search Type Filters -->
+                <div class="search-type-filters" id="search-type-filters" style="display: none;">
+                    <button class="filter-btn active" data-type="songs">🎵 Songs</button>
+                    <button class="filter-btn" data-type="albums">📀 Albums</button>
+                    <button class="filter-btn" data-type="playlists">📋 Playlists</button>
+                </div>
+            </form>
+            
+            <div id="search-message" class="message"></div>
+        </section>
+
+        <!-- Search Results Section -->
+        <section class="card" id="results-section" style="display: none;">
+            <div class="section-header">
+                <h2 id="results-title">Résultats</h2>
+                <div id="results-actions" class="results-actions"></div>
+            </div>
+            <div id="results-container">
+                <!-- Results will be displayed here -->
+            </div>
+        </section>
+
+        <!-- Queue Section -->
+        <section class="card">
+            <div class="section-header">
+                <h2>📋 File d'attente</h2>
+                <div class="queue-actions">
+                    <button id="clear-queue-btn" class="btn btn-secondary btn-small">Vider</button>
+                    <span id="queue-status" class="queue-status"></span>
+                </div>
+            </div>
+            <div id="queue-container">
+                <div class="loading">Chargement de la queue...</div>
+            </div>
+        </section>
+
+        <!-- Library Section -->
+        <section class="card">
+            <div class="section-header">
+                <h2>📚 Bibliothèque</h2>
+                <div class="search-box">
+                    <input type="text" id="library-search-input" placeholder="Rechercher dans la bibliothèque...">
+                    <button id="library-search-btn" class="btn btn-secondary">🔍</button>
+                </div>
+            </div>
+            <div id="library-container">
+                <!-- Albums view -->
+                <div id="albums-view">
+                    <div id="albums-container">
+                        <div class="loading">Chargement...</div>
+                    </div>
+                </div>
+                <!-- Album detail view (hidden by default) -->
+                <div id="album-detail-view" style="display: none;">
+                    <div class="album-detail-header">
+                        <button id="back-to-albums-btn" class="btn btn-secondary">← Retour aux albums</button>
+                        <h3 id="album-detail-title"></h3>
+                    </div>
+                    <div id="album-tracks-container">
+                        <div class="loading">Chargement...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

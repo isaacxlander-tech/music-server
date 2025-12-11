@@ -1,0 +1,28 @@
+[Unit]
+Description=Music Server - Serveur de gestion de musique pour Plex
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/music-server
+Environment="PATH=/opt/music-server/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/music-server/venv/bin/python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+Restart=always
+RestartSec=10
+
+# Sécurité
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/music-server/music /opt/music-server/downloads /opt/music-server/database
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=music-server
+
+[Install]
+WantedBy=multi-user.target
+

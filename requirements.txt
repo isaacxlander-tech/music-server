@@ -1,0 +1,21 @@
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.23
+
+# Audio processing
+mutagen==1.47.0
+
+# Download tools (install separately if needed)
+# yt-dlp>=2023.10.7
+# spotdl>=4.2.0
+
+# Utilities
+python-dotenv==1.0.0
+pyyaml==6.0.1
+requests==2.31.0
+

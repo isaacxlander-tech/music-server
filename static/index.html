@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Server - Gestionnaire de Musique</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="login-screen" class="screen active">
+            <div class="login-container">
+                <div class="login-card">
+                    <h1>🎵 Music Server</h1>
+                    <p class="subtitle">Gestionnaire de musique pour Plex</p>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label for="username">Nom d'utilisateur</label>
+                            <input type="text" id="username" name="username" required placeholder="admin" autocomplete="username">
+                        </div>
+                        <div class="form-group">
+                            <label for="password">Mot de passe</label>
+                            <input type="password" id="password" name="password" required placeholder="admin" autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Se connecter</button>
+                        <div id="login-error" class="error-message"></div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main App Screen -->
+        <div id="main-screen" class="screen">
+            <header class="app-header">
+                <h1>🎵 Music Server</h1>
+                <div class="header-actions">
+                    <span id="username-display"></span>
+                    <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+                </div>
+            </header>
+
+            <main class="app-main">
+                <!-- Download Section -->
+                <section class="card">
+                    <h2>📥 Télécharger une musique</h2>
+                    <form id="download-form">
+                        <div class="form-group">
+                            <label for="url">URL YouTube ou YouTube Music</label>
+                            <input type="url" id="url" name="url" required 
+                                   placeholder="https://www.youtube.com/watch?v=..." 
+                                   pattern="https?://(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)/.*">
+                            <small class="form-hint">Collez l'URL de la vidéo YouTube ou YouTube Music</small>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="download-btn">
+                            <span class="btn-text">Télécharger</span>
+                            <span class="btn-loader" style="display: none;">⏳ Téléchargement...</span>
+                        </button>
+                        <div id="download-message" class="message"></div>
+                    </form>
+                </section>
+
+                <!-- Library Section -->
+                <section class="card">
+                    <div class="section-header">
+                        <h2>📚 Bibliothèque</h2>
+                        <div class="search-box">
+                            <input type="text" id="search-input" placeholder="Rechercher...">
+                            <button id="search-btn" class="btn btn-secondary">🔍</button>
+                        </div>
+                    </div>
+                    <div id="tracks-container">
+                        <div class="loading">Chargement...</div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+
