@@ -3,131 +3,282 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Music Server - Application</title>
+    <title>Music Server</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="app-page">
-    <header class="app-header">
-        <h1>🎵 Music Server</h1>
-        <div class="header-actions">
-            <span id="username-display"></span>
-            <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <svg class="logo-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+            </svg>
+            <span class="logo-text">Music Server</span>
         </div>
-    </header>
-
-    <main class="app-main">
-        <!-- Search Section -->
-        <section class="card">
-            <h2>🔍 Chercher une musique ou un album</h2>
-            
-            <!-- Toggle Mode -->
-            <div class="search-mode-toggle">
-                <button id="url-mode-btn" class="mode-btn active" data-mode="url">
-                    🔗 Par URL
-                </button>
-                <button id="search-mode-btn" class="mode-btn" data-mode="search">
-                    🔍 Par recherche
-                </button>
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-view="search">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <span>Rechercher</span>
+            </a>
+            <a href="#" class="nav-item" data-view="library">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+                <span>Bibliothèque</span>
+            </a>
+            <a href="#" class="nav-item" data-view="downloads">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Téléchargements</span>
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <span id="username-display"></span>
             </div>
-            
-            <!-- URL Mode Form -->
-            <form id="url-search-form" class="search-form active">
-                <div class="form-group">
-                    <label for="url-input">URL YouTube ou YouTube Music</label>
-                    <div class="input-with-button">
-                        <input type="url" id="url-input" name="url" required 
-                               placeholder="https://music.youtube.com/playlist?list=...">
-                        <button type="submit" class="btn btn-primary" id="url-search-btn">
-                            <span class="btn-text">🔍 Chercher</span>
-                            <span class="btn-loader" style="display: none;">⏳ Recherche...</span>
+            <button id="logout-btn" class="btn-icon-text">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+                <span>Déconnexion</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-container">
+        <!-- Top Bar -->
+        <header class="topbar">
+            <button class="mobile-menu-btn" id="mobile-menu-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <div class="search-bar-container">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" id="top-search-input" placeholder="Que voulez-vous écouter ?" class="search-bar-input">
+            </div>
+        </header>
+
+        <!-- Content Area -->
+        <main class="content-area">
+            <!-- Search View -->
+            <div id="search-view" class="view active">
+                <!-- Search Mode Toggle -->
+                <div class="search-mode-toggle">
+                    <button id="url-mode-btn" class="mode-btn active" data-mode="url">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                        </svg>
+                        Par URL
+                    </button>
+                    <button id="search-mode-btn" class="mode-btn" data-mode="search">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        Par recherche
+                    </button>
+                </div>
+
+                <!-- URL Mode Form -->
+                <form id="url-search-form" class="search-form active">
+                    <div class="form-group">
+                        <label for="url-input">URL YouTube ou YouTube Music</label>
+                        <div class="input-with-button">
+                            <input type="url" id="url-input" name="url" required 
+                                   placeholder="https://music.youtube.com/playlist?list=...">
+                            <button type="submit" class="btn btn-primary" id="url-search-btn">
+                                <span class="btn-text">Rechercher</span>
+                                <span class="btn-loader" style="display: none;">
+                                    <svg class="spinner" viewBox="0 0 24 24">
+                                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" stroke-dasharray="32" stroke-dashoffset="32">
+                                            <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                                            <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+                                        </circle>
+                                    </svg>
+                                </span>
+                            </button>
+                        </div>
+                        <small class="form-hint">Collez l'URL d'une musique, d'un album ou d'une playlist</small>
+                    </div>
+                </form>
+
+                <!-- Text Search Mode Form -->
+                <form id="text-search-form" class="search-form" style="display: none;">
+                    <div class="form-group">
+                        <label for="platform-select">Plateforme</label>
+                        <select id="platform-select" name="platform" class="platform-select">
+                            <option value="youtube">YouTube Music</option>
+                            <option value="soundcloud">SoundCloud</option>
+                            <option value="spotify" disabled>Spotify (bientôt)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="text-search-input">Rechercher par nom d'artiste, titre ou album</label>
+                        <div class="input-with-button">
+                            <input type="text" id="text-search-input" name="query" required 
+                                   placeholder="Ex: jul">
+                            <button type="submit" class="btn btn-primary" id="text-search-btn">
+                                <span class="btn-text">Rechercher</span>
+                                <span class="btn-loader" style="display: none;">
+                                    <svg class="spinner" viewBox="0 0 24 24">
+                                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" stroke-dasharray="32" stroke-dashoffset="32">
+                                            <animate attributeName="stroke-dasharray" dur="2s" values="0 32;16 16;0 32;0 32" repeatCount="indefinite"/>
+                                            <animate attributeName="stroke-dashoffset" dur="2s" values="0;-16;-32;-32" repeatCount="indefinite"/>
+                                        </circle>
+                                    </svg>
+                                </span>
+                            </button>
+                        </div>
+                        <small class="form-hint">Tapez le nom d'un artiste, d'une chanson ou d'un album</small>
+                    </div>
+
+                    <!-- Search Type Filters -->
+                    <div class="search-type-filters" id="search-type-filters" style="display: none;">
+                        <button class="filter-btn active" data-type="songs">
+                            <svg class="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 18V5l12-2v13"></path>
+                                <circle cx="6" cy="18" r="3"></circle>
+                                <circle cx="18" cy="16" r="3"></circle>
+                            </svg>
+                            Songs
+                        </button>
+                        <button class="filter-btn" data-type="albums">
+                            <svg class="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="3" y1="9" x2="21" y2="9"></line>
+                                <line x1="9" y1="21" x2="9" y2="9"></line>
+                            </svg>
+                            Albums
+                        </button>
+                        <button class="filter-btn" data-type="playlists">
+                            <svg class="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                            </svg>
+                            Playlists
                         </button>
                     </div>
-                    <small class="form-hint">Collez l'URL d'une musique, d'un album ou d'une playlist</small>
-                </div>
-            </form>
-            
-            <!-- Text Search Mode Form -->
-            <form id="text-search-form" class="search-form" style="display: none;">
-                <div class="form-group">
-                    <label for="text-search-input">Rechercher par nom d'artiste, titre ou album</label>
-                    <div class="input-with-button">
-                        <input type="text" id="text-search-input" name="query" required 
-                               placeholder="Ex: jul">
-                        <button type="submit" class="btn btn-primary" id="text-search-btn">
-                            <span class="btn-text">🔍 Rechercher</span>
-                            <span class="btn-loader" style="display: none;">⏳ Recherche...</span>
+                </form>
+
+                <div id="search-message" class="message"></div>
+
+                <!-- Search Results Section -->
+                <section class="results-section" id="results-section" style="display: none;">
+                    <div class="section-header">
+                        <h2 id="results-title">Résultats</h2>
+                        <div id="results-actions" class="results-actions"></div>
+                    </div>
+                    <div id="results-container">
+                        <!-- Results will be displayed here -->
+                    </div>
+                </section>
+            </div>
+
+            <!-- Library View -->
+            <div id="library-view" class="view" style="display: none;">
+                <div class="section-header">
+                    <div>
+                        <h2>Ma Bibliothèque</h2>
+                        <p class="section-subtitle">Vos musiques téléchargées</p>
+                    </div>
+                    <div class="search-box">
+                        <input type="text" id="library-search-input" placeholder="Rechercher dans la bibliothèque...">
+                        <button id="library-search-btn" class="btn-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
                         </button>
                     </div>
-                    <small class="form-hint">Tapez le nom d'un artiste, d'une chanson ou d'un album</small>
                 </div>
-                
-                <!-- Search Type Filters -->
-                <div class="search-type-filters" id="search-type-filters" style="display: none;">
-                    <button class="filter-btn active" data-type="songs">🎵 Songs</button>
-                    <button class="filter-btn" data-type="albums">📀 Albums</button>
-                    <button class="filter-btn" data-type="playlists">📋 Playlists</button>
+                <!-- Library View Toggle -->
+                <div class="library-mode-toggle">
+                    <button id="library-tracks-btn" class="mode-btn active" data-mode="tracks">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                        </svg>
+                        Tous les titres
+                    </button>
+                    <button id="library-albums-btn" class="mode-btn" data-mode="albums">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="9" y1="3" x2="9" y2="21"></line>
+                        </svg>
+                        Albums
+                    </button>
                 </div>
-            </form>
-            
-            <div id="search-message" class="message"></div>
-        </section>
-
-        <!-- Search Results Section -->
-        <section class="card" id="results-section" style="display: none;">
-            <div class="section-header">
-                <h2 id="results-title">Résultats</h2>
-                <div id="results-actions" class="results-actions"></div>
-            </div>
-            <div id="results-container">
-                <!-- Results will be displayed here -->
-            </div>
-        </section>
-
-        <!-- Queue Section -->
-        <section class="card">
-            <div class="section-header">
-                <h2>📋 File d'attente</h2>
-                <div class="queue-actions">
-                    <button id="clear-queue-btn" class="btn btn-secondary btn-small">Vider</button>
-                    <span id="queue-status" class="queue-status"></span>
-                </div>
-            </div>
-            <div id="queue-container">
-                <div class="loading">Chargement de la queue...</div>
-            </div>
-        </section>
-
-        <!-- Library Section -->
-        <section class="card">
-            <div class="section-header">
-                <h2>📚 Bibliothèque</h2>
-                <div class="search-box">
-                    <input type="text" id="library-search-input" placeholder="Rechercher dans la bibliothèque...">
-                    <button id="library-search-btn" class="btn btn-secondary">🔍</button>
-                </div>
-            </div>
-            <div id="library-container">
-                <!-- Albums view -->
-                <div id="albums-view">
-                    <div id="albums-container">
-                        <div class="loading">Chargement...</div>
+                <div id="library-container">
+                    <!-- All Tracks view -->
+                    <div id="all-tracks-view">
+                        <div id="all-tracks-container">
+                            <div class="loading">Chargement...</div>
+                        </div>
                     </div>
-                </div>
-                <!-- Album detail view (hidden by default) -->
-                <div id="album-detail-view" style="display: none;">
-                    <div class="album-detail-header">
-                        <button id="back-to-albums-btn" class="btn btn-secondary">← Retour aux albums</button>
-                        <h3 id="album-detail-title"></h3>
+                    <!-- Albums view -->
+                    <div id="albums-view" style="display: none;">
+                        <div id="albums-container">
+                            <div class="loading">Chargement...</div>
+                        </div>
                     </div>
-                    <div id="album-tracks-container">
-                        <div class="loading">Chargement...</div>
+                    <!-- Album detail view (hidden by default) -->
+                    <div id="album-detail-view" style="display: none;">
+                        <div class="album-detail-header">
+                            <button id="back-to-albums-btn" class="btn-icon-text">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="15 18 9 12 15 6"></polyline>
+                                </svg>
+                                Retour
+                            </button>
+                            <h3 id="album-detail-title"></h3>
+                        </div>
+                        <div id="album-tracks-container">
+                            <div class="loading">Chargement...</div>
+                        </div>
                     </div>
                 </div>
             </div>
-        </section>
-    </main>
+
+            <!-- Downloads View -->
+            <div id="downloads-view" class="view" style="display: none;">
+                <div class="section-header">
+                    <div>
+                        <h2>Téléchargements</h2>
+                        <p class="section-subtitle">Suivi de vos téléchargements en cours</p>
+                    </div>
+                    <button id="clear-queue-btn" class="btn btn-secondary" style="display: none;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                        Vider la queue
+                    </button>
+                </div>
+                <div id="downloads-container">
+                    <div class="loading">Chargement...</div>
+                </div>
+            </div>
+        </main>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
 </html>
-

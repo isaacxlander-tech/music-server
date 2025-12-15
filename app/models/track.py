@@ -9,6 +9,7 @@ class SourceType(str, enum.Enum):
     """Source types for downloads"""
     YOUTUBE = "youtube"
     SPOTIFY = "spotify"
+    SOUNDCLOUD = "soundcloud"
     UNKNOWN = "unknown"
 
 

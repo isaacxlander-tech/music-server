@@ -1,6 +1,7 @@
 """API routes for music server"""
 import logging
 import os
+import subprocess
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -22,8 +23,11 @@ from app.services.downloader import DownloaderService
 from app.services.metadata import MetadataService
 from app.services.organizer import OrganizerService
 from app.services.plex import PlexService
+from app.services.music_sorter import MusicSorterService
+from app.services.artist_cleanup import ArtistCleanupService
 from app.services.task_manager import task_manager, TaskStatus
 from app.services.queue_manager import get_queue_manager
+from app.models.queue import QueueStatus
 from app.api.auth import get_current_user_id
 from app.config import settings
 
@@ -37,12 +41,52 @@ organizer_service = OrganizerService()
 plex_service = PlexService()
 queue_manager = get_queue_manager(task_manager)
 
+# Get yt-dlp path from venv
+YTDLP_CMD = "/opt/music-home/venv/bin/yt-dlp"
+if not Path(YTDLP_CMD).exists():
+    logger.warning(f"yt-dlp not found at {YTDLP_CMD}, using system command")
+    YTDLP_CMD = "yt-dlp"
+else:
+    logger.info(f"Using yt-dlp from: {YTDLP_CMD}")
 
-def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
+
+def process_download_sync(url: str, task_id: str, queue_item_id: int):
     """Synchronous background task to process download (for thread pool execution)"""
     db = SessionLocal()
+    queue_item = None
     try:
+        # Get queue item by id
+        queue_item = queue_manager.get_item_by_task_id(task_id)
+        if not queue_item:
+            queue_item = queue_manager.get_item_by_url(url)
+        
+        # Get source from queue_item (convert to SourceType if needed)
+        source = queue_item.source if queue_item else None
+        if source and isinstance(source, str):
+            try:
+                source = SourceType[source.upper()] if source.upper() in SourceType.__members__ else SourceType(source)
+            except (ValueError, KeyError):
+                logger.warning(f"Invalid source in queue_item: {source}, will auto-detect")
+                source = None
+        
+        # Update queue item
+        if queue_item:
+            queue_manager.update_item_status(
+                queue_item.id,
+                QueueStatus.PROCESSING,
+                progress=5,
+                message="Préparation du téléchargement..."
+            )
+        
         task_manager.update_task(task_id, TaskStatus.DOWNLOADING, 5, "Préparation du téléchargement...")
+        
+        if queue_item:
+            queue_manager.update_item_status(
+                queue_item.id,
+                QueueStatus.PROCESSING,
+                progress=15,
+                message="Téléchargement en cours..."
+            )
         task_manager.update_task(task_id, TaskStatus.DOWNLOADING, 15, "Téléchargement en cours...")
         
         # Download file (maintenant beaucoup plus rapide - télécharge directement le meilleur format)
@@ -54,9 +98,58 @@ def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
         if file_path is None:
             raise Exception("Download completed but file not found")
         
+        if queue_item:
+            queue_manager.update_item_status(
+                queue_item.id,
+                QueueStatus.PROCESSING,
+                progress=50,
+                message="Téléchargement terminé, conversion en FLAC..."
+            )
         task_manager.update_task(task_id, TaskStatus.DOWNLOADING, 50, "Téléchargement terminé, conversion en FLAC...")
         logger.info(f"File downloaded to: {file_path}")
-        logger.info(f"Download metadata from YouTube: {download_metadata}")
+        platform_name = detected_source.value.capitalize() if detected_source else "platform"
+        logger.info(f"Download metadata from {platform_name}: {download_metadata}")
+        
+        # Vérifier si le fichier existe encore dans downloads/ (peut avoir été déplacé par un autre processus)
+        if not file_path.exists():
+            # Chercher dans music/ si le fichier a été déplacé
+            logger.warning(f"File not found in downloads: {file_path.name}, searching in music directory...")
+            from app.config import settings
+            music_dir = settings.MUSIC_DIR
+            file_name = file_path.name
+            
+            # Chercher récursivement dans music/
+            found_in_music = None
+            for flac_in_music in music_dir.rglob(file_name):
+                if flac_in_music.exists() and flac_in_music.stat().st_size > 0:
+                    found_in_music = flac_in_music
+                    logger.info(f"File found in music directory (was moved by another process): {flac_in_music}")
+                    break
+            
+            if found_in_music:
+                # Vérifier si le track existe déjà dans la base de données
+                existing_track = db.query(Track).filter(
+                    (Track.file_path == str(found_in_music)) | 
+                    (Track.source_url == url)
+                ).first()
+                
+                if existing_track:
+                    logger.info(f"Track already exists in database, skipping processing: {existing_track.id}")
+                    if queue_item:
+                        queue_manager.update_item_status(
+                            queue_item.id,
+                            QueueStatus.COMPLETED,
+                            progress=100,
+                            message="Déjà téléchargé"
+                        )
+                    task_manager.update_task(task_id, TaskStatus.COMPLETED, 100, "Déjà téléchargé")
+                    return
+                else:
+                    # Le fichier existe dans music/ mais pas dans la DB, utiliser ce fichier
+                    file_path = found_in_music
+                    logger.info(f"Using file from music directory: {file_path}")
+            else:
+                raise FileNotFoundError(f"File not found in downloads or music: {file_path.name}")
         
         # Convert m4a to flac and embed thumbnail webp
         if file_path.suffix.lower() == ".m4a":
@@ -71,15 +164,56 @@ def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
                 # After conversion, we need to write metadata to the FLAC file
                 # The metadata will be written later in organizer_service
         
+        # Vérifier à nouveau si le fichier existe (peut avoir été déplacé pendant la conversion)
+        if not file_path.exists():
+            # Chercher dans music/ si le fichier a été déplacé
+            logger.warning(f"File not found after conversion: {file_path.name}, searching in music directory...")
+            from app.config import settings
+            music_dir = settings.MUSIC_DIR
+            file_name = file_path.name
+            
+            # Chercher récursivement dans music/
+            found_in_music = None
+            for flac_in_music in music_dir.rglob(file_name):
+                if flac_in_music.exists() and flac_in_music.stat().st_size > 0:
+                    found_in_music = flac_in_music
+                    logger.info(f"File found in music directory (was moved during conversion): {flac_in_music}")
+                    break
+            
+            if found_in_music:
+                file_path = found_in_music
+                logger.info(f"Using file from music directory: {file_path}")
+            else:
+                raise FileNotFoundError(f"File not found after conversion: {file_path.name}")
+        
         # Extract metadata from downloaded file
         file_metadata = metadata_service.extract_metadata(file_path)
         logger.info(f"Metadata extracted from file: {file_metadata}")
         
+        if queue_item:
+            queue_manager.update_item_status(
+                queue_item.id,
+                QueueStatus.PROCESSING,
+                progress=60,
+                message="Organisation du fichier..."
+            )
         task_manager.update_task(task_id, TaskStatus.PROCESSING, 60, "Organisation du fichier...")
+        
+        # Helper function to clean title from suffix
+        def clean_title_from_suffix(title: str) -> str:
+            """Remove timestamp/hash suffix from title (e.g., 'Title_1234567890_abc123' -> 'Title')"""
+            if not title:
+                return title
+            import re
+            # Pattern: Title_timestamp_hash
+            match = re.match(r'^(.+?)_\d+_[a-f0-9]+$', title)
+            if match:
+                return match.group(1)
+            return title
         
         # Merge with download metadata (from yt-dlp)
         if download_metadata:
-            # Prioritize download metadata over file metadata (more accurate from YouTube)
+            # Prioritize download metadata over file metadata (more accurate from platform)
             if download_metadata.get("artist"):
                 file_metadata["artist"] = download_metadata.get("artist")
             elif download_metadata.get("uploader") and not file_metadata.get("artist"):
@@ -87,8 +221,12 @@ def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
             elif download_metadata.get("channel") and not file_metadata.get("artist"):
                 file_metadata["artist"] = download_metadata.get("channel")
             
-            if download_metadata.get("title") and not file_metadata.get("title"):
+            # Always prioritize download metadata title, or clean file metadata title
+            if download_metadata.get("title"):
                 file_metadata["title"] = download_metadata.get("title")
+            elif file_metadata.get("title"):
+                # Clean title from suffix if it contains one
+                file_metadata["title"] = clean_title_from_suffix(file_metadata.get("title"))
             
             # Always use album from download metadata if available
             if download_metadata.get("album"):
@@ -116,9 +254,15 @@ def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
         
         logger.info(f"Final metadata before organization: artist={file_metadata.get('artist')}, title={file_metadata.get('title')}, album={file_metadata.get('album')}")
         
-        # Organize file in Plex structure (move from downloads to music)
-        organized_path = organizer_service.organize_file(file_path, file_metadata)
-        logger.info(f"File organized to: {organized_path}")
+        # Vérifier si le fichier est déjà dans music/ (peut avoir été déplacé par un autre processus)
+        from app.config import settings
+        if str(file_path).startswith(str(settings.MUSIC_DIR)):
+            logger.info(f"File is already in music directory, skipping organization: {file_path}")
+            organized_path = file_path
+        else:
+            # Organize file in Plex structure (move from downloads to music)
+            organized_path = organizer_service.organize_file(file_path, file_metadata)
+            logger.info(f"File organized to: {organized_path}")
         
         # Verify file is in music directory, not downloads
         if not str(organized_path).startswith(str(settings.MUSIC_DIR)):
@@ -132,6 +276,9 @@ def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
         
         logger.info(f"✅ File successfully moved to music directory: {organized_path}")
         
+        if queue_item:
+            queue_item.progress = 80
+            queue_item.message = "Sauvegarde dans la base de données..."
         task_manager.update_task(task_id, TaskStatus.PROCESSING, 80, "Sauvegarde dans la base de données...")
         
         # Check if track already exists (by file_path or source_url)
@@ -184,9 +331,29 @@ def process_download_sync(task_id: str, url: str, source: Optional[SourceType]):
         
         task_manager.update_task(task_id, TaskStatus.COMPLETED, 100, f"Téléchargement terminé: {track.title}", track_id=track.id)
         
+        # Update queue item to completed
+        if queue_item:
+            queue_manager.update_item_status(
+                queue_item.id,
+                QueueStatus.COMPLETED,
+                progress=100,
+                message=f"Téléchargement terminé: {track.title}",
+                title=track.title
+            )
+        
     except Exception as e:
         logger.exception(f"Error in download task {task_id}: {str(e)}")
         task_manager.update_task(task_id, error=str(e))
+        
+        # Update queue item to failed
+        if queue_item:
+            queue_manager.update_item_status(
+                queue_item.id,
+                QueueStatus.FAILED,
+                progress=0,
+                message="Échec du téléchargement",
+                error=str(e)
+            )
         db.rollback()
     finally:
         db.close()
@@ -208,13 +375,13 @@ async def download_music(
         logger.info(f"Adding to queue: {request.url}")
         
         # Add to queue instead of downloading immediately
-        item = queue_manager.add_to_queue(request.url, request.source)
-        
+        item = queue_manager.add_to_queue(request.url, request.source, None)  # Title will be set during download
+
         return {
             "success": True,
             "message": "Ajouté à la queue de téléchargement",
             "queue_size": queue_manager.get_queue_size(),
-            "item": item.to_dict()
+            "item": item  # item is already a dict
         }
         
     except Exception as e:
@@ -246,12 +413,12 @@ async def add_to_queue(
 ):
     """Add URL to download queue"""
     try:
-        item = queue_manager.add_to_queue(request.url, request.source)
+        item = queue_manager.add_to_queue(request.url, request.source, request.title)
         return {
             "success": True,
             "message": "URL ajoutée à la queue",
             "queue_size": queue_manager.get_queue_size(),
-            "item": item.to_dict()
+            "item": item  # item is already a dict
         }
     except Exception as e:
         logger.exception(f"Failed to add to queue: {str(e)}")
@@ -265,12 +432,17 @@ async def add_multiple_to_queue(
 ):
     """Add multiple URLs to download queue"""
     try:
-        items = queue_manager.add_multiple_to_queue(request.urls, request.source)
+        items = []
+        titles = request.titles or []
+        for i, url in enumerate(request.urls):
+            title = titles[i] if i < len(titles) else None
+            item = queue_manager.add_to_queue(url, request.source, title)
+            items.append(item)
         return {
             "success": True,
             "message": f"{len(request.urls)} URLs ajoutées à la queue",
             "queue_size": queue_manager.get_queue_size(),
-            "items": [item.to_dict() for item in items]
+            "items": [item if isinstance(item, dict) else item.to_dict() for item in items]
         }
     except Exception as e:
         logger.exception(f"Failed to add to queue: {str(e)}")
@@ -295,24 +467,23 @@ async def search_url(
         if is_playlist:
             # Extract playlist/album information
             cmd = [
-                "yt-dlp",
+                YTDLP_CMD,
                 "--flat-playlist",
                 "--dump-json",
                 "--no-warnings",
-                "--cookies-from-browser", "chrome",
                 url
             ]
             
-            logger.info(f"Extracting playlist, timeout: 120s")
+            logger.info(f"Extracting playlist, timeout: 300s")
             try:
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=120  # 2 minutes for playlists
+                    timeout=300  # 5 minutes for playlists
                 )
             except subprocess.TimeoutExpired:
-                logger.error("Playlist extraction timed out after 120 seconds")
+                logger.error("Playlist extraction timed out after 300 seconds")
                 raise Exception("L'extraction de la playlist a pris trop de temps. Essayez avec une playlist plus petite ou réessayez plus tard.")
             
             # Parse tracks even if returncode != 0 (might have warnings but still got data)
@@ -379,10 +550,9 @@ async def search_url(
                 try:
                     first_track_url = tracks[0]["url"]
                     playlist_cmd = [
-                        "yt-dlp",
+                        YTDLP_CMD,
                         "--dump-json",
                         "--no-warnings",
-                        "--cookies-from-browser", "chrome",
                         first_track_url
                     ]
                     
@@ -416,10 +586,9 @@ async def search_url(
         else:
             # Single track - get information
             cmd = [
-                "yt-dlp",
+                YTDLP_CMD,
                 "--dump-json",
                 "--no-warnings",
-                "--cookies-from-browser", "chrome",
                 url
             ]
             
@@ -478,30 +647,41 @@ async def search_by_text_quick(
         import json
         
         query = request.get("query", "").strip()
+        platform = request.get("platform", "youtube").lower()  # Nouveau paramètre
         limit = request.get("limit", 20)  # More results for better artist grouping
         
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
         
-        # Fast search with minimal metadata
-        search_query = f"ytsearch{limit}:{query}"
+        # Construire la requête selon la plateforme
+        if platform == "youtube":
+            search_query = f"ytsearch{limit}:{query}"
+        elif platform == "soundcloud":
+            search_query = f"scsearch{limit}:{query}"
+        elif platform == "spotify":
+            raise HTTPException(status_code=501, detail="Recherche Spotify non encore implémentée")
+        else:
+            raise HTTPException(status_code=400, detail=f"Plateforme non supportée: {platform}")
         
+        # Use --flat-playlist for speed (both YouTube and SoundCloud)
+        # For quick search, speed is more important than full metadata
         cmd = [
-            "yt-dlp",
-            "--flat-playlist",  # Faster, no full metadata
+            YTDLP_CMD,
+            "--flat-playlist",  # Faster, no full metadata extraction
             "--dump-json",
             "--no-warnings",
             "--no-playlist",  # Don't extract playlists
-            "--cookies-from-browser", "chrome",
             search_query
         ]
         
-        logger.info(f"Fast search for: {query}")
+        logger.info(f"Fast search for: {query} on platform: {platform}")
+        # Timeout standard pour recherche rapide
+        timeout = 30  # 30 secondes max pour recherche rapide
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=15  # Shorter timeout for quick search
+            timeout=timeout
         )
         
         if result.returncode != 0:
@@ -517,30 +697,74 @@ async def search_by_text_quick(
             if line.strip():
                 try:
                     data = json.loads(line)
-                    video_id = data.get('id', '')
-                    if not video_id:
-                        continue
+                    
+                    # Pour SoundCloud, l'ID peut être dans différents champs
+                    if platform == "soundcloud":
+                        video_id = data.get('id') or data.get('track_id') or data.get('url', '').split('/')[-1] if data.get('url') else ''
+                        # Si pas d'ID mais on a une URL, on peut continuer
+                        if not video_id and not (data.get('url') or data.get('webpage_url')):
+                            logger.debug(f"Skipping SoundCloud result: no ID or URL found")
+                            continue
+                    else:
+                        video_id = data.get('id', '')
+                        if not video_id:
+                            continue
                     
                     # Extract artist from title or channel
                     title = data.get('title', 'Unknown')
-                    artist = data.get('uploader') or data.get('channel') or 'Unknown Artist'
+                    if platform == "soundcloud":
+                        # SoundCloud peut avoir uploader, creator, ou artist
+                        artist = data.get('uploader') or data.get('creator') or data.get('artist') or data.get('channel') or 'Unknown Artist'
+                    else:
+                        artist = data.get('uploader') or data.get('channel') or 'Unknown Artist'
                     
-                    # Construct URL
-                    track_url = f"https://www.youtube.com/watch?v={video_id}"
+                    # Construct URL selon la plateforme
+                    if platform == "youtube":
+                        track_url = f"https://www.youtube.com/watch?v={video_id}"
+                    elif platform == "soundcloud":
+                        # Pour SoundCloud, utiliser l'URL complète si disponible
+                        track_url = data.get('url') or data.get('webpage_url')
+                        if not track_url and video_id:
+                            # Construire l'URL depuis l'ID si possible
+                            uploader_id = data.get('uploader_id') or data.get('uploader', '').lower().replace(' ', '-')
+                            track_url = f"https://soundcloud.com/{uploader_id}/{video_id}"
+                        if not track_url:
+                            logger.debug(f"Skipping SoundCloud track: no URL available")
+                            continue
+                    else:
+                        track_url = data.get('url') or data.get('webpage_url') or f"https://www.youtube.com/watch?v={video_id}"
                     
                     # Group by artist
                     if artist not in artists_map:
+                        # Thumbnail selon la plateforme (avec --flat-playlist, peut être limité)
+                        if platform == "youtube":
+                            default_thumbnail = f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                        elif platform == "soundcloud":
+                            # Avec --flat-playlist, les thumbnails peuvent ne pas être disponibles
+                            default_thumbnail = data.get('thumbnail') or data.get('artwork_url') or data.get('artwork_url_https') or ""
+                        else:
+                            default_thumbnail = data.get('thumbnail') or ""
+                        
                         artists_map[artist] = {
                             "name": artist,
-                            "thumbnail": data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg",
+                            "thumbnail": data.get('thumbnail') or data.get('artwork_url') or data.get('artwork_url_https') or default_thumbnail,
                             "tracks": []
                         }
+                    
+                    # Thumbnail pour les tracks selon la plateforme
+                    if platform == "youtube":
+                        track_thumbnail = data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                    elif platform == "soundcloud":
+                        # Avec --flat-playlist, les thumbnails peuvent ne pas être disponibles
+                        track_thumbnail = data.get('thumbnail') or data.get('artwork_url') or data.get('artwork_url_https') or ""
+                    else:
+                        track_thumbnail = data.get('thumbnail') or ""
                     
                     artists_map[artist]["tracks"].append({
                         "id": video_id,
                         "title": title,
                         "url": track_url,
-                        "thumbnail": data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                        "thumbnail": track_thumbnail
                     })
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.debug(f"Failed to parse search result: {e}")
@@ -580,29 +804,39 @@ async def search_by_text(
         import json
         
         query = request.get("query", "").strip()
+        platform = request.get("platform", "youtube").lower()  # Nouveau paramètre
         result_type = request.get("type", "songs")  # songs, albums, playlists
         limit = request.get("limit", 10)
         
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
         
-        # Use ytsearch: prefix for YouTube search
-        search_query = f"ytsearch{limit}:{query}"
-        
+        # Construire la requête selon la plateforme
+        if platform == "youtube":
+            search_query = f"ytsearch{limit}:{query}"
+        elif platform == "soundcloud":
+            search_query = f"scsearch{limit}:{query}"
+        elif platform == "spotify":
+            raise HTTPException(status_code=501, detail="Recherche Spotify non encore implémentée")
+        else:
+            raise HTTPException(status_code=400, detail=f"Plateforme non supportée: {platform}")
+
+        # Use --flat-playlist for speed (both platforms)
         cmd = [
-            "yt-dlp",
+            YTDLP_CMD,
+            "--flat-playlist",  # Faster, no full metadata extraction
             "--dump-json",
             "--no-warnings",
-            "--cookies-from-browser", "chrome",
             search_query
         ]
         
-        logger.info(f"Searching YouTube for: {query} (type: {result_type})")
+        logger.info(f"Searching {platform} for: {query} (type: {result_type})")
+        timeout = 45  # Timeout standard pour recherche
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=timeout
         )
         
         if result.returncode != 0:
@@ -618,20 +852,51 @@ async def search_by_text(
             if line.strip():
                 try:
                     data = json.loads(line)
-                    video_id = data.get('id', '')
-                    if not video_id:
-                        continue
                     
-                    # Construct URL
-                    track_url = f"https://www.youtube.com/watch?v={video_id}"
+                    # Pour SoundCloud, l'ID peut être dans différents champs
+                    if platform == "soundcloud":
+                        video_id = data.get('id') or data.get('track_id') or data.get('url', '').split('/')[-1] if data.get('url') else ''
+                        if not video_id and not (data.get('url') or data.get('webpage_url')):
+                            continue
+                    else:
+                        video_id = data.get('id', '')
+                        if not video_id:
+                            continue
+                    
+                    # Construct URL selon la plateforme
+                    if platform == "youtube":
+                        track_url = f"https://www.youtube.com/watch?v={video_id}"
+                    elif platform == "soundcloud":
+                        track_url = data.get('url') or data.get('webpage_url')
+                        if not track_url and video_id:
+                            uploader_id = data.get('uploader_id') or data.get('uploader', '').lower().replace(' ', '-')
+                            track_url = f"https://soundcloud.com/{uploader_id}/{video_id}"
+                        if not track_url:
+                            continue
+                    else:
+                        track_url = data.get('url') or data.get('webpage_url') or f"https://www.youtube.com/watch?v={video_id}"
+                    
+                    # Extract artist
+                    if platform == "soundcloud":
+                        artist = data.get('uploader') or data.get('creator') or data.get('artist') or data.get('channel', 'Unknown Artist')
+                    else:
+                        artist = data.get('uploader') or data.get('channel', 'Unknown Artist')
+                    
+                    # Thumbnail selon la plateforme (avec --flat-playlist, peut être limité)
+                    if platform == "youtube":
+                        thumbnail = data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                    elif platform == "soundcloud":
+                        thumbnail = data.get('thumbnail') or data.get('artwork_url') or data.get('artwork_url_https') or ""
+                    else:
+                        thumbnail = data.get('thumbnail') or ""
                     
                     tracks.append({
                         "id": video_id,
                         "title": data.get('title', 'Unknown'),
-                        "artist": data.get('uploader') or data.get('channel', 'Unknown Artist'),
+                        "artist": artist,
                         "duration": data.get('duration', 0),
                         "url": track_url,
-                        "thumbnail": data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                        "thumbnail": thumbnail
                     })
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.debug(f"Failed to parse search result: {e}")
@@ -668,31 +933,40 @@ async def search_artist_content(
         import json
         
         artist_name = request.get("artist", "").strip()
+        platform = request.get("platform", "youtube").lower()
         content_type = request.get("type", "songs")  # songs, albums, playlists
         limit = request.get("limit", 20)
         
         if not artist_name:
             raise HTTPException(status_code=400, detail="Artist name is required")
         
-        # Fast search with --flat-playlist (no full metadata extraction)
-        search_query = f"ytsearch{limit}:{artist_name}"
+        # Construire la requête selon la plateforme
+        if platform == "youtube":
+            search_query = f"ytsearch{limit}:{artist_name}"
+        elif platform == "soundcloud":
+            search_query = f"scsearch{limit}:{artist_name}"
+        elif platform == "spotify":
+            raise HTTPException(status_code=501, detail="Recherche Spotify non encore implémentée")
+        else:
+            raise HTTPException(status_code=400, detail=f"Plateforme non supportée: {platform}")
         
+        # Use --flat-playlist for speed (both platforms)
         cmd = [
-            "yt-dlp",
-            "--flat-playlist",  # Faster - no full metadata
+            YTDLP_CMD,
+            "--flat-playlist",  # Faster, no full metadata extraction
             "--dump-json",
             "--no-warnings",
             "--no-playlist",
-            "--cookies-from-browser", "chrome",
             search_query
         ]
         
-        logger.info(f"Fast search content for artist: {artist_name} (type: {content_type})")
+        logger.info(f"Fast search content for artist: {artist_name} on platform: {platform} (type: {content_type})")
+        timeout = 30  # Timeout standard pour recherche rapide
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=15  # Reduced timeout for faster response
+            timeout=timeout
         )
         
         if result.returncode != 0:
@@ -708,19 +982,44 @@ async def search_artist_content(
             if line.strip():
                 try:
                     data = json.loads(line)
-                    video_id = data.get('id', '')
-                    if not video_id:
-                        continue
+                    
+                    # Pour SoundCloud, l'ID peut être dans différents champs
+                    if platform == "soundcloud":
+                        video_id = data.get('id') or data.get('track_id') or data.get('url', '').split('/')[-1] if data.get('url') else ''
+                        if not video_id and not (data.get('url') or data.get('webpage_url')):
+                            continue
+                    else:
+                        video_id = data.get('id', '')
+                        if not video_id:
+                            continue
                     
                     # Extract artist from title or channel
                     title = data.get('title', 'Unknown')
-                    artist = data.get('uploader') or data.get('channel') or 'Unknown Artist'
+                    if platform == "soundcloud":
+                        artist = data.get('uploader') or data.get('creator') or data.get('artist') or data.get('channel') or 'Unknown Artist'
+                    else:
+                        artist = data.get('uploader') or data.get('channel') or 'Unknown Artist'
                     
                     # Filter by artist if needed (case-insensitive partial match)
                     if artist_name.lower() not in artist.lower() and artist.lower() not in artist_name.lower():
                         continue
                     
-                    track_url = f"https://www.youtube.com/watch?v={video_id}"
+                    # Construct URL selon la plateforme
+                    if platform == "youtube":
+                        track_url = f"https://www.youtube.com/watch?v={video_id}"
+                    elif platform == "soundcloud":
+                        track_url = data.get('url') or data.get('webpage_url') or f"https://soundcloud.com/{data.get('uploader_id', '')}/{data.get('id', '')}"
+                    else:
+                        track_url = data.get('url') or data.get('webpage_url') or f"https://www.youtube.com/watch?v={video_id}"
+                    
+                    # Thumbnail selon la plateforme
+                    if platform == "youtube":
+                        thumbnail = data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                    elif platform == "soundcloud":
+                        # SoundCloud peut avoir thumbnail, artwork_url, ou artwork_url_https
+                        thumbnail = data.get('thumbnail') or data.get('artwork_url') or data.get('artwork_url_https') or ""
+                    else:
+                        thumbnail = data.get('thumbnail') or ""
                     
                     tracks.append({
                         "id": video_id,
@@ -728,7 +1027,7 @@ async def search_artist_content(
                         "artist": artist,
                         "duration": data.get('duration', 0),  # May be 0 with --flat-playlist
                         "url": track_url,
-                        "thumbnail": data.get('thumbnail') or f"https://i.ytimg.com/vi/{video_id}/default.jpg"
+                        "thumbnail": thumbnail
                     })
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.debug(f"Failed to parse search result: {e}")
@@ -774,7 +1073,7 @@ async def extract_album_urls(
             "message": f"Album extrait: {len(urls)} musiques ajoutées à la queue",
             "queue_size": queue_manager.get_queue_size(),
             "urls_count": len(urls),
-            "items": [item.to_dict() for item in items]
+            "items": items  # items are already dicts
         }
         
     except Exception as e:
@@ -815,12 +1114,19 @@ async def clear_queue(
     user_id: int = Depends(get_current_user_id)
 ):
     """Clear all pending items from queue"""
-    queue_manager.clear_queue()
-    return {
-        "success": True,
-        "message": "Queue vidée",
-        "queue_size": queue_manager.get_queue_size()
-    }
+    try:
+        logger.info("Clear queue requested")
+        queue_manager.clear_queue()
+        queue_size = queue_manager.get_queue_size()
+        logger.info(f"Queue cleared successfully, remaining size: {queue_size}")
+        return {
+            "success": True,
+            "message": "Queue vidée",
+            "queue_size": queue_size
+        }
+    except Exception as e:
+        logger.exception(f"Error clearing queue: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear queue: {str(e)}")
 
 
 @router.get("/tracks", response_model=List[TrackResponse])
@@ -1059,7 +1365,7 @@ async def diagnostic():
     
     # Check tools
     tools_to_check = {
-        "yt-dlp": ["yt-dlp", "--version"],
+        "yt-dlp": [YTDLP_CMD, "--version"],
         "spotdl": ["spotdl", "--version"],
         "ffmpeg": ["ffmpeg", "-version"]
     }
@@ -1105,4 +1411,120 @@ async def diagnostic():
     }
     
     return diagnostics
+
+
+@router.post("/api/music/fix-plex-metadata", response_model=dict)
+async def fix_plex_metadata(
+    dry_run: bool = Query(False, description="Mode simulation sans modification"),
+    user_id: Optional[int] = Depends(get_current_user_id)
+):
+    """
+    Corriger les métadonnées pour Plex
+    
+    Cette route permet de :
+    - Mettre à jour les métadonnées dans les fichiers pour correspondre à la structure
+    - Forcer un refresh complet de Plex
+    - Vider la corbeille Plex
+    
+    Args:
+        dry_run: Si True, simule sans modifier les fichiers
+    
+    Returns:
+        Statistiques de la correction
+    """
+    try:
+        from app.services.plex_metadata_fixer import PlexMetadataFixer
+        
+        logger.info(f"🔧 Démarrage de la correction des métadonnées Plex (dry_run={dry_run})")
+        fixer = PlexMetadataFixer()
+        stats = fixer.fix_all_metadata(dry_run=dry_run)
+        
+        # Forcer le refresh complet de Plex
+        if not dry_run and stats['fixed'] > 0:
+            logger.info("🔄 Refresh complet de Plex...")
+            plex_service.empty_trash()
+            plex_service.force_refresh_metadata()
+        
+        return {
+            "success": True,
+            "stats": stats,
+            "message": f"Correction terminée: {stats['fixed']}/{stats['total_files']} fichiers corrigés"
+        }
+    except Exception as e:
+        logger.error(f"Erreur lors de la correction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/music/cleanup-artists", response_model=dict)
+async def cleanup_artists(
+    dry_run: bool = Query(False, description="Mode simulation sans modification"),
+    user_id: Optional[int] = Depends(get_current_user_id)
+):
+    """
+    Nettoyer et fusionner les artistes en double
+    
+    Cette route permet de :
+    - Fusionner les artistes en double (ex: "Sofiane Officiel" → "Sofiane")
+    - Corriger les noms d'artistes (ex: "B20baOfficiel" → "Booba")
+    - Traiter les fichiers dans "Unknown Artist"
+    - Réorganiser la bibliothèque
+    
+    Args:
+        dry_run: Si True, simule sans modifier les fichiers
+    
+    Returns:
+        Statistiques du nettoyage
+    """
+    try:
+        logger.info(f"🎨 Démarrage du nettoyage des artistes (dry_run={dry_run})")
+        cleanup_service = ArtistCleanupService()
+        stats = cleanup_service.clean_all_artists(dry_run=dry_run)
+        
+        # Recharger Plex si des fichiers ont été déplacés
+        if not dry_run and stats['files_moved'] > 0:
+            plex_service.force_refresh_metadata()
+        
+        return {
+            "success": True,
+            "stats": stats,
+            "message": f"Nettoyage terminé: {stats['artists_merged']} artistes fusionnés, {stats['files_moved']} fichiers déplacés"
+        }
+    except Exception as e:
+        logger.error(f"Erreur lors du nettoyage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/music/sort", response_model=dict)
+async def sort_music_library(
+    dry_run: bool = Query(False, description="Mode simulation sans modification"),
+    user_id: Optional[int] = Depends(get_current_user_id)
+):
+    """
+    Trier et enrichir toute la bibliothèque musicale
+    
+    Cette route permet de :
+    - Enrichir les métadonnées via MusicBrainz
+    - Nettoyer les noms de fichiers (enlever "(Official Video)", URLs, etc.)
+    - Réorganiser les fichiers selon la structure Plex
+    - Télécharger et intégrer les pochettes d'album
+    - Recharger la bibliothèque Plex
+    
+    Args:
+        dry_run: Si True, simule sans modifier les fichiers
+    
+    Returns:
+        Statistiques du tri
+    """
+    try:
+        logger.info(f"🎵 Démarrage du tri de la bibliothèque (dry_run={dry_run})")
+        sorter = MusicSorterService()
+        stats = sorter.sort_all_music(dry_run=dry_run)
+        return {
+            "success": True,
+            "stats": stats,
+            "message": f"Tri terminé: {stats['processed']}/{stats['total_files']} fichiers traités"
+        }
+    except Exception as e:
+        logger.error(f"Erreur lors du tri: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 

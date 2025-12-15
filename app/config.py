@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     INCLUDE_YEAR_IN_ALBUM: bool = True
     
     # Download settings
-    MAX_CONCURRENT_DOWNLOADS: int = 3
+    MAX_CONCURRENT_DOWNLOADS: int = 1  # Un seul téléchargement à la fois pour éviter les conflits
     DOWNLOAD_TIMEOUT: int = 600  # 10 minutes
     
     # API settings

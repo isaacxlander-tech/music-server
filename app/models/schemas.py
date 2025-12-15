@@ -61,12 +61,14 @@ class QueueAddRequest(BaseModel):
     """Schema for adding URL to queue"""
     url: str
     source: Optional[SourceType] = None
+    title: Optional[str] = None  # Track title if available
 
 
 class QueueAddMultipleRequest(BaseModel):
     """Schema for adding multiple URLs to queue"""
     urls: List[str]
     source: Optional[SourceType] = None
+    titles: Optional[List[str]] = None  # Track titles if available (same order as urls)
 
 
 class AlbumExtractRequest(BaseModel):

@@ -60,10 +60,11 @@ if [ "$MODE" = "production" ]; then
     echo ""
     
     # Démarrer avec uvicorn en mode production (sans reload)
+    # Utiliser 6 workers pour améliorer les performances maintenant que la conversion est corrigée
     python3 -m uvicorn app.main:app \
         --host "${API_HOST:-0.0.0.0}" \
         --port "${API_PORT:-8000}" \
-        --workers 4 \
+        --workers 6 \
         --log-level info
 else
     echo "🔧 Démarrage du serveur en mode DEVELOPMENT"
